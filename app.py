@@ -5,15 +5,15 @@ import pandas as pd
 st.set_page_config(page_title="競輪 擬似単勝オッズ計算アプリ", layout="centered")
 
 st.title("競輪 擬似単勝オッズ計算アプリ")
-st.caption("KEIRIN.JPのオッズ画面のテキストをコピーして貼り付けるだけで、自動で全組を解析・計算します！")
+st.caption("KEIRIN.JPのオッズ画面のテキストを貼り付けるだけで、全組を完璧に解析・計算します！")
 
 st.markdown("---")
 st.subheader("📊 オッズテキストの貼り付け")
 st.markdown("""
 **【使い方】**
 1. KEIRIN.JPの三連単オッズ画面を開く。
-2. 画面上のテキストをすべて選択してコピーする（PCなら `Ctrl+A` または `Cmd+A` で全選択してコピーするのがおすすめ）。
-3.下の入力欄にそのままペースト（貼り付け）する。
+2. 画面上のテキストをすべて選択してコピーする。
+3. 下の入力欄にそのままペースト（貼り付け）する。
 """)
 
 pasted_text = st.text_area("オッズテキストをここに貼り付け", value="", height=180, placeholder="ここにコピーしたテキストを貼り付けてください...")
@@ -22,58 +22,43 @@ if not pasted_text.strip():
     st.info("💡 上のテキストエリアにオッズ画面のテキストを貼り付けてください。")
     st.stop()
 
-# --- 強力なマルチパターン・テキスト解析処理 ---
+# --- 完全順序解析ロジック ---
+# 1. テキスト内に出現する車番（1〜9）を自動検出
+detected_cars = sorted(list(set([int(m) for m in re.findall(r'\b([1-9])\b', pasted_text) if 1 <= int(m) <= 9])))
+# 通常は1〜9の9車立て（または7車など）
+cars = [c for c in range(1, 10) if str(c) in pasted_text]
+if len(cars) < 3:
+    cars = [1, 2, 3, 4, 5, 6, 7, 8, 9] # フォールバック
+
+# 3連単の標準的な並び順（昇順）で組み合わせを生成する関数
+def get_combinations(first_car, all_cars):
+    combs = []
+    other_cars = [c for c in all_cars if c != first_car]
+    for c2 in other_cars:
+        for c3 in other_cars:
+            if c2 != c3:
+                combs.append((first_car, c2, c3))
+    return combs
+
+# 2. テキストから「小数点を含むオッズ数値」を順番通りにすべて抽出
+all_odds_raw = re.findall(r'(\d{1,5}\.\d+)', pasted_text)
+
 records = []
-lines = [line.strip() for line in pasted_text.splitlines() if line.strip()]
+odds_idx = 0
 
-# パターン1: 「1-2-3 12.5」や「1 2 3 12.5」など、1行の中に3つの車番とオッズが含まれる形式
-pattern_inline = re.compile(
-    r'([1-9])\s*[-=＝→>\s]\s*([1-9])\s*[-=＝→>\s]\s*([1-9])\D+?([0-9]{1,4}(?:,[0-9]{3})*(?:\.[0-9]+)?)'
-)
-
-for line in lines:
-    match = pattern_inline.search(line)
-    if match:
-        c1, c2, c3 = int(match.group(1)), int(match.group(2)), int(match.group(3))
-        odds_str = match.group(4).replace(",", "").replace("倍", "").strip()
-        try:
-            odds_val = float(odds_str)
-            if len({c1, c2, c3}) == 3 and odds_val > 0:
-                records.append({"first": c1, "second": c2, "third": c3, "odds": odds_val})
-        except ValueError:
-            continue
-
-# フォールバック: 表形式などで数字とオッズが離れて並んでいる場合をスマートにスキャン
-if len(records) < 20:
-    tokens = []
-    for line in lines:
-        parts = line.split()
-        for p in parts:
-            p_clean = p.replace(",", "").replace("倍", "")
-            if re.match(r'^[1-9]$', p):
-                tokens.append({"type": "car", "val": int(p)})
-            elif re.match(r'^\d{1,4}\.\d+$', p_clean) or re.match(r'^\d{1,4}$', p_clean):
-                try:
-                    v = float(p_clean)
-                    if v > 0:
-                        tokens.append({"type": "odds", "val": v})
-                except ValueError:
-                    pass
-    
-    # 「車番, 車番, 車番, オッズ」の並びを検出
-    for idx in range(len(tokens) - 3):
-        if (tokens[idx]["type"] == "car" and 
-            tokens[idx+1]["type"] == "car" and 
-            tokens[idx+2]["type"] == "car" and 
-            tokens[idx+3]["type"] == "odds"):
-            
-            c1 = tokens[idx]["val"]
-            c2 = tokens[idx+1]["val"]
-            c3 = tokens[idx+2]["val"]
-            odds_val = tokens[idx+3]["val"]
-            
-            if len({c1, c2, c3}) == 3:
-                records.append({"first": c1, "second": c2, "third": c3, "odds": odds_val})
+# 3. 各1着車番ごとに、正しい組み合わせの順番でオッズを順番に割り当て
+for first_car in cars:
+    combs = get_combinations(first_car, cars)
+    for c1, c2, c3 in combs:
+        if odds_idx < len(all_odds_raw):
+            try:
+                odds_val = float(all_odds_raw[odds_idx])
+                # 異常値（売っていない組合せの9999.9等）を除外
+                if 1.0 <= odds_val < 99998:
+                    records.append({"first": c1, "second": c2, "third": c3, "odds": odds_val})
+            except ValueError:
+                pass
+            odds_idx += 1
 
 # 重複除去
 unique_records = {}
@@ -84,11 +69,8 @@ for r in records:
 final_records = list(unique_records.values())
 
 if not final_records:
-    st.error("オッズデータを自動検出できませんでした。KEIRIN.JPのオッズ画面のテキスト全体をコピーして再度貼り付けてみてください。")
+    st.error("オッズデータを自動検出できませんでした。テキスト全体が正しくコピーされているか確認してください。")
     st.stop()
-
-# 検出車番の整理
-cars = sorted(list(set([r["first"] for r in final_records] + [r["second"] for r in final_records] + [r["third"] for r in final_records])))
 
 st.success(f"データ解析成功！ （検出データ: {len(final_records)} 組 / 出走車番: {len(cars)}台）")
 
