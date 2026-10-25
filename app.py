@@ -1,70 +1,46 @@
 import streamlit as st
-import re
+import json
+import base64
 import pandas as pd
 
-st.set_page_config(page_title="競輪 擬似単勝オッズ計算アプリ", layout="centered")
+st.set_page_config(page_title="擬似単勝オッズアプリ", layout="centered")
 
 st.title("競輪 擬似単勝オッズ計算アプリ")
-st.caption("KEIRIN.JPのオッズ画面のテキストをコピペするだけで自動計算！")
 
 st.markdown("---")
-st.subheader("📊 オッズテキストの貼り付け")
-st.markdown("""
-**【使い方】**
-1. KEIRIN.JPの三連単オッズ画面で、画面上のテキストをコピーする。
-2. 下の入力欄にそのまま**ペースト（貼り付け）**する。
-""")
+st.subheader("📊 データ入力")
+st.markdown("KEIRIN.JPのオッズ画面でブックマークレットを実行し、コピーしたデータを下の枠内に貼り付けてください。")
 
-pasted_text = st.text_area("オッズテキストをここに貼り付け", value="", height=150, placeholder="画面のテキストをすべてコピーしてここに貼ってください...")
+pasted_data = st.text_area("ここにデータをペースト（貼り付け）", value="", height=100)
 
-if not pasted_text.strip():
-    st.info("💡 上のテキストエリアにオッズテキストを貼り付けてください。")
+if not pasted_data.strip():
+    st.info("💡 ブックマークレットで取得したデータをここに貼り付けてください。")
     st.stop()
 
-# --- 強力なテキスト解析処理 ---
-records = []
-
-# 改行やスペースを跨いでも「車番 - 車番 - 車番  オッズ」のパターンを柔軟にキャッチする正規表現
-# 例: 1-2-3 12.5 や 1 2 3 1,234.5 などを網羅的に抽出
-pattern = re.compile(
-    r'([1-9])\s*[-=＝→>\s]\s*([1-9])\s*[-=＝→>\s]\s*([1-9])\D+?([0-9]{1,4}(?:,[0-9]{3})*(?:\.[0-9]+)?)'
-)
-
-matches = pattern.findall(pasted_text)
-
-for m in matches:
-    c1, c2, c3 = int(m[0]), int(m[1]), int(m[2])
-    # カンマや「倍」を除去して数値化
-    odds_str = m[3].replace(",", "").replace("倍", "").strip()
-    try:
-        odds_val = float(odds_str)
-        if len({c1, c2, c3}) == 3 and odds_val > 0:
-            records.append({"first": c1, "second": c2, "third": c3, "odds": odds_val})
-    except ValueError:
-        continue
-
-# 重複除去
-unique_records = {}
-for r in records:
-    key = f"{r['first']}-{r['second']}-{r['third']}"
-    unique_records[key] = r
-
-final_records = list(unique_records.values())
-
-if not final_records:
-    st.error("オッズデータを検出できませんでした。コピーしたテキストの範囲を確認するか、再度コピーして貼り付けてみてください。")
+try:
+    normalized = pasted_data.strip().replace("-", "+").replace("_", "/")
+    padded = normalized + "=" * (-len(normalized) % 4)
+    json_bytes = base64.b64decode(padded)
+    payload = json.loads(json_bytes.decode("utf-8"))
+    
+    records = payload.get("records", [])
+    cars = payload.get("car_numbers", [])
+    
+    if not records:
+        st.error("有効なオッズデータが見つかりませんでした。")
+        st.stop()
+        
+except Exception as e:
+    st.error(f"データの読み込みに失敗しました（データ形式が正しくありません）: {e}")
     st.stop()
 
-# 検出車番の整理
-cars = sorted(list(set([r["first"] for r in final_records] + [r["second"] for r in final_records] + [r["third"] for r in final_records])))
+st.success(f"データ読込成功！ （総データ数: {len(records)} 組）")
 
-st.success(f"データ解析成功！ （検出データ: {len(final_records)} 組 / 出走車番: {len(cars)}台）")
-
-# --- 擬似単勝オッズ計算 ---
+# --- 擬似単勝オッズの計算ロジック ---
 pseudo_odds_map = {}
 
 for car in cars:
-    car_records = [r for r in final_records if r["first"] == car]
+    car_records = [r for r in records if r["first"] == car]
     if not car_records:
         continue
     
@@ -76,15 +52,16 @@ if not pseudo_odds_map:
     st.warning("計算できるデータがありませんでした。")
     st.stop()
 
-# 人気順位・支持率の計算
+# 人気順位の算出
 sorted_cars = sorted(pseudo_odds_map.items(), key=lambda x: x[1])
 rank_map = {car: idx for idx, (car, odds) in enumerate(sorted_cars, 1)}
 
+# 支持率の目安
 inv_totals = {car: 1.0 / odds for car, odds in pseudo_odds_map.items()}
 total_inv = sum(inv_totals.values())
 support_rates = {car: (inv / total_inv) * 100 for car, inv in inv_totals.items()}
 
-# --- 1. 指定人気順位の表示 (2, 5, 6, 7, 9番人気) ---
+# --- 指定順位の抽出 ---
 target_ranks = [2, 5, 6, 7, 9]
 rank_to_car = {rank: car for car, rank in rank_map.items()}
 
@@ -111,7 +88,7 @@ for r_target in target_ranks:
 df_target = pd.DataFrame(result_data)
 st.table(df_target)
 
-# --- 2. 全車番一覧の表示 ---
+# --- 全車番の一覧 ---
 st.markdown("### 📋 全車番の擬似単勝オッズ一覧")
 full_data = []
 for car, rank in sorted(rank_map.items(), key=lambda x: x[1]):
