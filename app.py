@@ -22,15 +22,39 @@ if not pasted_text.strip():
     st.info("💡 上のテキストエリアにオッズ画面のテキストを貼り付けてください。")
     st.stop()
 
-# --- 完全順序解析ロジック ---
-# 1. テキスト内に出現する車番（1〜9）を自動検出
-detected_cars = sorted(list(set([int(m) for m in re.findall(r'\b([1-9])\b', pasted_text) if 1 <= int(m) <= 9])))
-# 通常は1〜9の9車立て（または7車など）
-cars = [c for c in range(1, 10) if str(c) in pasted_text]
-if len(cars) < 3:
-    cars = [1, 2, 3, 4, 5, 6, 7, 8, 9] # フォールバック
+# --- 車番の自動判定ロジック ---
+# 出走リスト等から実際に登場する車番（1〜9）を抽出
+# 例: 「1 高橋広大 2 長松空吾 ... 8 小酒大勇」 などのパターンから最大車番を自動判定
+lines = [line.strip() for line in pasted_text.splitlines() if line.strip()]
 
-# 3連単の標準的な並び順（昇順）で組み合わせを生成する関数
+# 選手名テキストや「番車」「車」表記、あるいはブロック見出しから登場車番を検出
+detected_cars = set()
+
+# オッズ見出しブロック（「1 2 3」「4 5 6」などの見出しや選手リスト）から1〜9の車番をチェック
+for line in lines:
+    # 選手名が並ぶ行や見出しから車番を補正
+    matches = re.findall(r'([1-9])\s*[\u4e00-\u9faf\u3040-\u309f\u30a0-\u30ff]+', line)
+    for m in matches:
+        detected_cars.add(int(m))
+
+# テキスト全体で車番単体として出現している数字（1〜9）のうち、連続しているものを車番とみなす
+all_single_digits = set([int(m) for m in re.findall(r'(?<!\d)([1-9])(?!\d)', pasted_text)])
+
+# 通常、競輪は1番車から連続しているため、1から順番に連続する数字を車番として採用
+cars = []
+for c in range(1, 10):
+    # テキスト内に登場、かつ「着」や単体数字として存在する
+    if c in detected_cars or c in all_single_digits:
+        cars.append(c)
+    else:
+        # 途中途切れたらそれ以降は非出走と判断（例: 1〜8まであって9がない）
+        if len(cars) >= 5: # 最低5車以上揃っていればそこで打ち切り
+            break
+
+if not cars:
+    cars = [1, 2, 3, 4, 5, 6, 7, 8, 9]
+
+# --- 組み合わせ生成関数 ---
 def get_combinations(first_car, all_cars):
     combs = []
     other_cars = [c for c in all_cars if c != first_car]
@@ -40,21 +64,21 @@ def get_combinations(first_car, all_cars):
                 combs.append((first_car, c2, c3))
     return combs
 
-# 2. テキストから「小数点を含むオッズ数値」を順番通りにすべて抽出
+# 2. テキストから「オッズ数値（小数含む）」を順番通りにすべて抽出
 all_odds_raw = re.findall(r'(\d{1,5}\.\d+)', pasted_text)
 
 records = []
 odds_idx = 0
 
-# 3. 各1着車番ごとに、正しい組み合わせの順番でオッズを順番に割り当て
+# 各1着車番ごとに組み合わせ順に割り当て
 for first_car in cars:
     combs = get_combinations(first_car, cars)
     for c1, c2, c3 in combs:
         if odds_idx < len(all_odds_raw):
             try:
                 odds_val = float(all_odds_raw[odds_idx])
-                # 異常値（売っていない組合せの9999.9等）を除外
-                if 1.0 <= odds_val < 99998:
+                # 異常値（9999.9等）を除外
+                if 1.0 <= odds_val < 9998:
                     records.append({"first": c1, "second": c2, "third": c3, "odds": odds_val})
             except ValueError:
                 pass
@@ -72,7 +96,7 @@ if not final_records:
     st.error("オッズデータを自動検出できませんでした。テキスト全体が正しくコピーされているか確認してください。")
     st.stop()
 
-st.success(f"データ解析成功！ （検出データ: {len(final_records)} 組 / 出走車番: {len(cars)}台）")
+st.success(f"データ解析成功！ （検出データ: {len(final_records)} 組 / 出走車番: {len(cars)}台 - {cars[0]}〜{cars[-1]}番車）")
 
 # --- 擬似単勝オッズ計算 ---
 pseudo_odds_map = {}
