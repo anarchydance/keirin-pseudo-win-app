@@ -5,64 +5,43 @@ import pandas as pd
 st.set_page_config(page_title="競輪 擬似単勝オッズ計算アプリ", layout="centered")
 
 st.title("競輪 擬似単勝オッズ計算アプリ")
-st.caption("KEIRIN.JPの三連単オッズ画面のテキストをコピペするだけで自動計算！")
+st.caption("KEIRIN.JPのオッズ画面のテキストをコピペするだけで自動計算！")
 
 st.markdown("---")
 st.subheader("📊 オッズテキストの貼り付け")
 st.markdown("""
 **【使い方】**
-1. KEIRIN.JPの三連単オッズ画面を開く。
-2. 画面上のテキストを**長押しで全選択（すべて選択）**して**コピー**する。
-3. 下の入力欄にそのまま**ペースト（貼り付け）**する。
+1. KEIRIN.JPの三連単オッズ画面で、画面上のテキストをコピーする。
+2. 下の入力欄にそのまま**ペースト（貼り付け）**する。
 """)
 
 pasted_text = st.text_area("オッズテキストをここに貼り付け", value="", height=150, placeholder="画面のテキストをすべてコピーしてここに貼ってください...")
 
 if not pasted_text.strip():
-    st.info("💡 上のテキストエリアにKEIRIN.JPのオッズテキストを貼り付けてください。")
+    st.info("💡 上のテキストエリアにオッズテキストを貼り付けてください。")
     st.stop()
 
-# --- テキスト解析処理 ---
-lines = [line.strip() for line in pasted_text.splitlines() if line.strip()]
-
+# --- 強力なテキスト解析処理 ---
 records = []
-current_first = None
 
-# テキストを行ごとに解析
-for i, line in enumerate(lines):
-    # 1着の見出し（「1番車」「1着」などの検出）
-    m_first = re.search(r'^([1-9])\s*(?:番車|着)?$', line)
-    if m_first and ("番車" in line or "全選択" in line or (i + 1 < len(lines) and "番車" in lines[i+1])):
-        current_first = int(m_first.group(1))
+# 改行やスペースを跨いでも「車番 - 車番 - 車番  オッズ」のパターンを柔軟にキャッチする正規表現
+# 例: 1-2-3 12.5 や 1 2 3 1,234.5 などを網羅的に抽出
+pattern = re.compile(
+    r'([1-9])\s*[-=＝→>\s]\s*([1-9])\s*[-=＝→>\s]\s*([1-9])\D+?([0-9]{1,4}(?:,[0-9]{3})*(?:\.[0-9]+)?)'
+)
+
+matches = pattern.findall(pasted_text)
+
+for m in matches:
+    c1, c2, c3 = int(m[0]), int(m[1]), int(m[2])
+    # カンマや「倍」を除去して数値化
+    odds_str = m[3].replace(",", "").replace("倍", "").strip()
+    try:
+        odds_val = float(odds_str)
+        if len({c1, c2, c3}) == 3 and odds_val > 0:
+            records.append({"first": c1, "second": c2, "third": c3, "odds": odds_val})
+    except ValueError:
         continue
-
-    # 1-2-3 12.3 や 1-2 3.4 などのパターン抽出
-    # 車番組合せ + オッズの正規表現
-    m_comb = re.search(r'([1-9])\s*[-=＝→>]\s*([1-9])\s*[-=＝→>]\s*([1-9])\s+([0-9]+(?:\.[0-9]+)?)', line)
-    if m_comb:
-        c1, c2, c3, odds_str = int(m_comb.group(1)), int(m_comb.group(2)), int(m_comb.group(3)), float(m_comb.group(4))
-        if len({c1, c2, c3}) == 3 and odds_str > 0:
-            records.append({"first": c1, "second": c2, "third": c3, "odds": odds_str})
-        continue
-
-    # テーブル形式（2着車番、3着車番、オッズが連なる形式）の汎用解析
-    # 数字とオッズ（例: 2 3 15.4）
-    parts = line.split()
-    if len(parts) >= 2:
-        try:
-            # 2着 3着 オッズ の形
-            if len(parts) >= 3 and parts[0].isdigit() and parts[1].isdigit():
-                c2, c3 = int(parts[0]), int(parts[1])
-                odds_val = float(parts[2].replace(",", "").replace("倍", ""))
-                if current_first and len({current_first, c2, c3}) == 3 and odds_val > 0:
-                    records.append({"first": current_first, "second": c2, "third": c3, "odds": odds_val})
-            # 2着/3着 オッズ の形
-            elif len(parts) == 2 and parts[0].isdigit():
-                odds_val = float(parts[1].replace(",", "").replace("倍", ""))
-                # 直前や文脈から補正
-                pass
-        except ValueError:
-            pass
 
 # 重複除去
 unique_records = {}
@@ -73,7 +52,7 @@ for r in records:
 final_records = list(unique_records.values())
 
 if not final_records:
-    st.error("オッズデータを自動検出できませんでした。KEIRIN.JPの三連単オッズ画面全体のテキストをそのままコピーして貼り付けてみてください。")
+    st.error("オッズデータを検出できませんでした。コピーしたテキストの範囲を確認するか、再度コピーして貼り付けてみてください。")
     st.stop()
 
 # 検出車番の整理
