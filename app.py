@@ -9,7 +9,7 @@ st.caption("オッズ画面のテキストを貼り付け、出走する車番�
 
 st.markdown("---")
 
-# --- 出走車番数の手動選択（サイドバーまたは上部） ---
+# --- 出走車番数の手動選択 ---
 col1, col2 = st.columns([1, 1])
 with col1:
     car_count_mode = st.radio("出走車番の数を選択", [9, 8, 7], index=1, horizontal=True, help="通常のレースは9車、8車立てや7車立ての場合はここで合わせてください")
@@ -40,45 +40,39 @@ all_odds_raw = re.findall(r'(\d{1,5}\.\d+)', pasted_text)
 records = []
 odds_idx = 0
 
-# 各1着車番ごとに組み合わせ順に割り当て
+# 各1着車番ごとに組み合わせ順に割り当て（9999.9なども位置をズラさないために全数取得）
 for first_car in cars:
     combs = get_combinations(first_car, cars)
     for c1, c2, c3 in combs:
         if odds_idx < len(all_odds_raw):
             try:
                 odds_val = float(all_odds_raw[odds_idx])
-                # 異常値（9999.9等）を除外
-                if 1.0 <= odds_val < 9998:
-                    records.append({"first": c1, "second": c2, "third": c3, "odds": odds_val})
+                records.append({"first": c1, "second": c2, "third": c3, "odds": odds_val})
             except ValueError:
                 pass
             odds_idx += 1
 
-# 重複除去
-unique_records = {}
-for r in records:
-    key = f"{r['first']}-{r['second']}-{r['third']}"
-    unique_records[key] = r
-
-final_records = list(unique_records.values())
-
-if not final_records:
+if not records:
     st.error("オッズデータを自動検出できませんでした。テキスト全体が正しくコピーされているか確認してください。")
     st.stop()
 
-st.success(f"データ解析成功！ （検出データ: {len(final_records)} 組 / 設定: {car_count_mode}車立て）")
+st.success(f"データ解析成功！ （検出データ: {len(records)} 組 / 設定: {car_count_mode}車立て）")
 
 # --- 擬似単勝オッズ計算 ---
 pseudo_odds_map = {}
 
 for car in cars:
-    car_records = [r for r in final_records if r["first"] == car]
+    car_records = [r for r in records if r["first"] == car]
     if not car_records:
         continue
     
-    inv_sum = sum(1.0 / r["odds"] for r in car_records if r["odds"] > 0)
-    if inv_sum > 0:
-        pseudo_odds_map[car] = round(1.0 / inv_sum, 1)
+    # 9999.9（極大オッズ/未設定）は擬似単勝オッズの計算対象から除外
+    valid_odds = [r["odds"] for r in car_records if 0 < r["odds"] < 9998]
+    
+    if valid_odds:
+        inv_sum = sum(1.0 / odds for odds in valid_odds)
+        if inv_sum > 0:
+            pseudo_odds_map[car] = round(1.0 / inv_sum, 1)
 
 if not pseudo_odds_map:
     st.warning("計算できるデータがありませんでした。")
