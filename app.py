@@ -5,54 +5,24 @@ import pandas as pd
 st.set_page_config(page_title="競輪 擬似単勝オッズ計算アプリ", layout="centered")
 
 st.title("競輪 擬似単勝オッズ計算アプリ")
-st.caption("KEIRIN.JPのオッズ画面のテキストを貼り付けるだけで、全組を完璧に解析・計算します！")
+st.caption("オッズ画面のテキストを貼り付け、出走する車番数を選んで計算します！")
 
 st.markdown("---")
-st.subheader("📊 オッズテキストの貼り付け")
-st.markdown("""
-**【使い方】**
-1. KEIRIN.JPの三連単オッズ画面を開く。
-2. 画面上のテキストをすべて選択してコピーする。
-3. 下の入力欄にそのままペースト（貼り付け）する。
-""")
 
-pasted_text = st.text_area("オッズテキストをここに貼り付け", value="", height=180, placeholder="ここにコピーしたテキストを貼り付けてください...")
+# --- 出走車番数の手動選択（サイドバーまたは上部） ---
+col1, col2 = st.columns([1, 1])
+with col1:
+    car_count_mode = st.radio("出走車番の数を選択", [9, 8, 7], index=1, horizontal=True, help="通常のレースは9車、8車立てや7車立ての場合はここで合わせてください")
+
+st.subheader("📊 オッズテキストの貼り付け")
+pasted_text = st.text_area("オッズテキストをここに貼り付け", value="", height=160, placeholder="ここにコピーしたテキストを貼り付けてください...")
 
 if not pasted_text.strip():
     st.info("💡 上のテキストエリアにオッズ画面のテキストを貼り付けてください。")
     st.stop()
 
-# --- 車番の自動判定ロジック ---
-# 出走リスト等から実際に登場する車番（1〜9）を抽出
-# 例: 「1 高橋広大 2 長松空吾 ... 8 小酒大勇」 などのパターンから最大車番を自動判定
-lines = [line.strip() for line in pasted_text.splitlines() if line.strip()]
-
-# 選手名テキストや「番車」「車」表記、あるいはブロック見出しから登場車番を検出
-detected_cars = set()
-
-# オッズ見出しブロック（「1 2 3」「4 5 6」などの見出しや選手リスト）から1〜9の車番をチェック
-for line in lines:
-    # 選手名が並ぶ行や見出しから車番を補正
-    matches = re.findall(r'([1-9])\s*[\u4e00-\u9faf\u3040-\u309f\u30a0-\u30ff]+', line)
-    for m in matches:
-        detected_cars.add(int(m))
-
-# テキスト全体で車番単体として出現している数字（1〜9）のうち、連続しているものを車番とみなす
-all_single_digits = set([int(m) for m in re.findall(r'(?<!\d)([1-9])(?!\d)', pasted_text)])
-
-# 通常、競輪は1番車から連続しているため、1から順番に連続する数字を車番として採用
-cars = []
-for c in range(1, 10):
-    # テキスト内に登場、かつ「着」や単体数字として存在する
-    if c in detected_cars or c in all_single_digits:
-        cars.append(c)
-    else:
-        # 途中途切れたらそれ以降は非出走と判断（例: 1〜8まであって9がない）
-        if len(cars) >= 5: # 最低5車以上揃っていればそこで打ち切り
-            break
-
-if not cars:
-    cars = [1, 2, 3, 4, 5, 6, 7, 8, 9]
+# 選択された車番数に応じた車番リストを生成（例: 8車なら 1〜8）
+cars = list(range(1, car_count_mode + 1))
 
 # --- 組み合わせ生成関数 ---
 def get_combinations(first_car, all_cars):
@@ -64,7 +34,7 @@ def get_combinations(first_car, all_cars):
                 combs.append((first_car, c2, c3))
     return combs
 
-# 2. テキストから「オッズ数値（小数含む）」を順番通りにすべて抽出
+# テキストから「オッズ数値（小数含む）」を順番通りにすべて抽出
 all_odds_raw = re.findall(r'(\d{1,5}\.\d+)', pasted_text)
 
 records = []
@@ -96,7 +66,7 @@ if not final_records:
     st.error("オッズデータを自動検出できませんでした。テキスト全体が正しくコピーされているか確認してください。")
     st.stop()
 
-st.success(f"データ解析成功！ （検出データ: {len(final_records)} 組 / 出走車番: {len(cars)}台 - {cars[0]}〜{cars[-1]}番車）")
+st.success(f"データ解析成功！ （検出データ: {len(final_records)} 組 / 設定: {car_count_mode}車立て）")
 
 # --- 擬似単勝オッズ計算 ---
 pseudo_odds_map = {}
